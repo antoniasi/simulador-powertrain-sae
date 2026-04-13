@@ -29,7 +29,7 @@ except Exception as e:
     st.stop()
 
 # TÍTULO E CABEÇALHO
-st.title("⚡ Otimização de Powertrain Híbrido - SAE - Brenda")
+st.title("Otimização de Powertrain Híbrido - SAE")
 st.markdown(f"**Status:** Conectado ao banco de dados SAE (Data: {len(df_db)} combustíveis)")
 st.markdown("---")
 
