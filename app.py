@@ -1,101 +1,124 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from supabase import create_client
+from sqlalchemy import create_engine
 
-# Configuração da Página
-st.set_page_config(page_title="Simulador Híbrido SAE", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="SAE Powertrain Optimizer v2", layout="wide")
 
-# 1. CONEXÃO COM O BANCO DE DADOS (CLIENTE DIRETO)
+# Substitua pelas suas credenciais do Supabase (URI de conexão direta)
+DB_URI = "postgresql://postgres:[SENHA]@db.[ID-PROJETO].supabase.co:5432/postgres"
+
+@st.cache_resource
+def get_engine():
+    return create_engine(DB_URI)
+
+def load_data():
+    engine = get_engine()
+    query = "SELECT * FROM vw_mapa_eficiencia_powertrain"
+    return pd.read_sql(query, engine)
+
+# --- CARREGAMENTO DE DADOS ---
 try:
-    # Busca as credenciais das Secrets
-    url = st.secrets["connections"]["supabase"]["url"]
-    key = st.secrets["connections"]["supabase"]["key"]
-    
-    # Inicializa o cliente oficial do Supabase
-    supabase = create_client(url, key)
-    
-    # Busca os dados da tabela
-    response = supabase.table("combustiveis").select("*").execute()
-    df_db = pd.DataFrame(response.data)
-    
-    if df_db.empty:
-        st.error("A tabela 'combustiveis' foi encontrada, mas está vazia.")
-        st.stop()
-        
+    df = load_data()
 except Exception as e:
-    st.error(f"Erro crítico de conexão: {e}")
-    st.info("Dica: Verifique se as Secrets estão como [connections.supabase] e se a URL/Key estão corretas.")
+    st.error(f"Erro ao conectar ao banco de dados: {e}")
     st.stop()
 
-# TÍTULO E CABEÇALHO
-st.title("Otimização de Powertrain Híbrido - SAE")
-st.markdown(f"**Status:** Conectado ao banco de dados SAE (Data: {len(df_db)} combustíveis)")
-st.markdown("---")
+# --- SIDEBAR: PAINEL DE CONTROLE ---
+st.sidebar.header("🕹️ Painel de Controle")
 
-# 2. SIDEBAR - PARÂMETROS DE CONTROLE
-st.sidebar.header("⚙️ Painel de Controle")
+lista_combustiveis = df['combustivel'].unique()
+comb_selecionado = st.sidebar.selectbox("Selecionar Combustível", lista_combustiveis)
 
-# Seleção de combustível vindo do SQL
-nome_selecionado = st.sidebar.selectbox("Selecionar Combustível", df_db['nome'].unique())
-fuel = df_db[df_db['nome'] == nome_selecionado].iloc[0]
+# Filtrar dados para o combustível selecionado
+df_comb = df[df['combustivel'] == comb_selecionado]
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Calibração em Tempo Real")
+# Sliders dinâmicos baseados no range disponível no DB
+min_afr = float(df_comb['afr_testado'].min())
+max_afr = float(df_comb['afr_testado'].max())
+afr_target = st.sidebar.slider("Mistura (AFR)", min_afr, max_afr, float(df_comb['afr_testado'].median()), 0.1)
 
-# Inputs numéricos e Sliders
-pot_eletrica = st.sidebar.number_input("Auxílio Elétrico (cv)", value=150, step=10)
-# Os sliders agora iniciam no valor exato que está cadastrado no seu banco
-afr = st.sidebar.slider("Mistura (AFR)", 1.0, 45.0, float(fuel['afr_estoic']), step=0.1)
-avanco = st.sidebar.slider("Avanço de Ignição (°BTDC)", 5, 50, int(fuel['avanco_base']))
+min_avanco = int(df_comb['avanco_testado'].min())
+max_avanco = int(df_comb['avanco_testado'].max())
+avanco_target = st.sidebar.slider("Avanço de Ignição (°BTDC)", min_avanco, max_avanco, int(df_comb['avanco_testado'].median()))
 
-# 3. LÓGICA DE ENGENHARIA (CÁLCULOS)
-# Define o alvo estequiométrico baseado no tipo de ciclo (Otto vs Diesel/Pobre)
-if fuel['tipo_motor'] in ['Diesel', 'Pobre']:
-    alvo_afr = float(fuel['afr_estoic']) * 1.2
+auxilio_eletrico = st.sidebar.number_input("Auxílio Elétrico (cv)", value=150)
+
+# --- LÓGICA DE CAPTURA DO PONTO ATUAL ---
+# Busca a linha exata no dataframe que corresponde ao ajuste dos sliders
+atual = df_comb[
+    (df_comb['afr_testado'] >= afr_target - 0.2) & (df_comb['afr_testado'] <= afr_target + 0.2) &
+    (df_comb['avanco_testado'] == avanco_target)
+].iloc[0]
+
+# --- TÍTULO E STATUS ---
+st.title("🚀 Otimização de Powertrain Híbrido - SAE")
+st.write(f"**Desenvolvido por Daniel Antoniasi** | Combustível: {comb_selecionado}")
+
+# Alertar sobre a segurança (Mudança de cor dinâmica)
+status = atual['status_seguranca']
+if "PERIGO" in status:
+    st.error(f"🛑 {status}")
+elif "Ineficiente" in status:
+    st.warning(f"⚠️ {status}")
 else:
-    alvo_afr = float(fuel['afr_estoic']) * 0.85
+    st.success(f"✅ {status}")
 
-# Cálculo da Penalidade Parabólica
-penalidade = (10 * (afr - alvo_afr)**2) + (1.5 * (avanco - float(fuel['avanco_base']))**2)
-pot_ice = max(0, float(fuel['pot_max']) - penalidade)
-pot_total = pot_ice + pot_eletrica
-eficiencia = (pot_ice / float(fuel['pot_max'])) * 100
+st.divider()
 
-# 4. DASHBOARD DE MÉTRICAS
-col1, col2, col3 = st.columns(3)
-col1.metric("Potência ICE", f"{pot_ice:.1f} cv")
-col2.metric("Potência Total (Híbrida)", f"{pot_total:.1f} cv")
-col3.metric("Eficiência do Setup", f"{eficiencia:.1f}%")
+# --- ROW 1: MÉTRICAS PRINCIPAIS ---
+col1, col2, col3, col4 = st.columns(4)
 
-# Feedback visual de engenharia
-if eficiencia < 40:
-    st.error("⚠️ Calibração Instável: Risco de danos mecânicos ou falha de ignição.")
-elif eficiencia > 95:
-    st.success(f"✅ Setup de Alta Performance para {nome_selecionado}!")
+with col1:
+    st.metric("Potência ICE", f"{atual['potencia_ice']} cv")
+with col2:
+    # Somando o auxílio elétrico dinâmico do slider
+    pot_total = atual['potencia_ice'] + auxilio_eletrico
+    st.metric("Potência Total", f"{pot_total} cv")
+with col3:
+    # Delta baseado em temperatura crítica de 950 graus
+    st.metric("EGT (Temperatura)", f"{atual['egt_estimada']} °C", 
+              delta=f"{atual['egt_estimada'] - 950} °C", delta_color="inverse")
+with col4:
+    st.metric("Consumo (BSFC)", f"{atual['bsfc_estimado']} g/kWh")
 
-# 5. VISUALIZAÇÃO TÉCNICA (MAPA DE CALOR)
-st.markdown("---")
-st.subheader(f"📊 Análise de Sensibilidade: {nome_selecionado}")
-st.write("O mapa abaixo simula a variação de potência total nos arredores do seu ajuste atual.")
+st.divider()
 
-# Gerando malha de simulação para o gráfico
-grid_data = []
-for a in [afr + (i * 0.5) for i in range(-5, 6)]:
-    for v in [avanco + i for i in range(-5, 6)]:
-        p_penalidade = (10 * (a - alvo_afr)**2) + (1.5 * (v - float(fuel['avanco_base']))**2)
-        p_ice = max(0, float(fuel['pot_max']) - p_penalidade)
-        grid_data.append({"AFR": a, "Avanço": v, "Potência Total": p_ice + pot_eletrica})
+# --- ROW 2: ANÁLISE GRÁFICA (TABS) ---
+tab_potencia, tab_termica, tab_custo = st.tabs(["📊 Mapa de Performance", "🔥 Análise Térmica", "💰 Eficiência e Custo"])
 
-df_plot = pd.DataFrame(grid_data)
+with tab_potencia:
+    st.subheader("Variação de Potência Total (cv)")
+    fig_pot = px.density_heatmap(
+        df_comb, x="afr_testado", y="avanco_testado", z="potencia_total",
+        color_continuous_scale="Viridis", text_auto=True,
+        labels={'afr_testado': 'AFR', 'avanco_testado': 'Avanço (°)'}
+    )
+    st.plotly_chart(fig_pot, use_container_width=True)
 
-# Gráfico de calor usando Plotly
-fig = px.density_heatmap(
-    df_plot, x="AFR", y="Avanço", z="Potência Total",
-    color_continuous_scale="Viridis",
-    labels={'Potência Total': 'Potência (cv)'},
-    text_auto=".0f"
-)
-st.plotly_chart(fig, use_container_width=True)
+with tab_termica:
+    st.subheader("Mapa de Temperatura de Exaustão (EGT)")
+    fig_egt = px.density_heatmap(
+        df_comb, x="afr_testado", y="avanco_testado", z="egt_estimada",
+        color_continuous_scale="Reds", text_auto=True,
+        labels={'afr_testado': 'AFR', 'avanco_testado': 'Avanço (°)'}
+    )
+    st.plotly_chart(fig_egt, use_container_width=True)
 
-st.caption("Desenvolvido por Daniel Antoniasi - Projeto SAE Powertrain Otimização")
+with tab_custo:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("Eficiência de Consumo (g/kWh)")
+        fig_bsfc = px.density_heatmap(
+            df_comb, x="afr_testado", y="avanco_testado", z="bsfc_estimado",
+            color_continuous_scale="Bluyl", text_auto=True
+        )
+        st.plotly_chart(fig_bsfc, use_container_width=True)
+    with col_b:
+        st.subheader("Custo Estimado por Hora (BRL)")
+        st.metric("Custo/Hora Atual", f"R$ {atual['custo_estimado_hora']}")
+        st.info("O custo considera a densidade energética e o BSFC do combustível selecionado.")
+
+# --- FOOTER ---
+st.caption("Nota: Os dados apresentados são simulações baseadas em modelos termodinâmicos para o Projeto SAE.")
