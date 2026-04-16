@@ -7,7 +7,8 @@ from sqlalchemy import create_engine
 st.set_page_config(page_title="SAE Powertrain Optimizer v2", layout="wide")
 
 
-DB_URI = "postgresql://postgres%2Epksspzswlwtkejupilod:DGN5iXp7qY8NwPU7@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
+
+DB_URI = "postgresql://postgres:DGN5iXp7qY8NwPU7@db.pksspzswlwtkejupilod.supabase.co:5432/postgres"
 
 @st.cache_resource
 def get_engine():
