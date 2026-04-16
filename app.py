@@ -6,8 +6,8 @@ from sqlalchemy import create_engine
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="SAE Powertrain Optimizer v2", layout="wide")
 
-# Substitua pelas suas credenciais do Supabase (URI de conexão direta)
-DB_URI = "postgresql://postgres.pksspzswlwtkejupilod:DGN5iXp7qY8NwPU7@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
+
+DB_URI = "postgresql://postgres%2Epksspzswlwtkejupilod:DGN5iXp7qY8NwPU7@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
 def get_engine():
