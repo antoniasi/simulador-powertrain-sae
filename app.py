@@ -8,7 +8,7 @@ st.set_page_config(page_title="SAE Powertrain Optimizer v2", layout="wide")
 
 
 
-DB_URI = "postgresql://postgres:DGN5iXp7qY8NwPU7@db.pksspzswlwtkejupilod.supabase.co:5432/postgres"
+DB_URI = "postgresql://postgres.pksspzswlwtkejupilod:DGN5iXp7qY8NwPU7@aws-1-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
 
 @st.cache_resource
 def get_engine():
