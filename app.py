@@ -52,26 +52,61 @@ avanco = st.sidebar.slider(
 pot_eletrica = st.sidebar.number_input("Auxílio Elétrico (cv)", value=150)
 
 # ==========================================
-# 3. LÓGICA DE CURVA (Cenário Atual do Slider)
+# 3. LÓGICA DE CURVA (FÍSICA DA SUA PLANILHA)
 # ==========================================
 rpm_limite = int(fuel['rpm_max'])
 rpm = np.linspace(1000, rpm_limite, 100)
 
-# Alvo ideal estequiométrico ajustado para performance (ex: 10% mais rico)
-alvo_afr = float(fuel['afr_estoic']) * 0.9 
+# Extração dos parâmetros físicos (Considerando que V8 4.0L, EV=1.0 e Ar=1.2 já estejam no banco)
+cil_litros = float(motor['cilindrada_litros']) if 'parametros_motor' in locals() else 4.0
+eficiencia_vol = float(motor['eficiencia_volumetrica']) if 'parametros_motor' in locals() else 1.0
+densidade_ar = float(motor['densidade_ar']) if 'parametros_motor' in locals() else 1.2
 
-# Cálculo de eficiência baseado no desvio do ponto ideal
-erro_mistura = abs(mistura - alvo_afr) * 0.15
-erro_avanco = abs(avanco - fuel['avanco_base']) * 0.05
-eficiencia_total = max(0, 1 - (erro_mistura + erro_avanco))
+lcv_combustivel = float(fuel['densidade_energetica'])
+tipo_motor = fuel['tipo_motor'] # Puxa se é Otto, Diesel ou Pobre
 
+# --- PASSO 1: Fluxo de Ar (kg/s) ---
+volume_aspirado_m3 = (rpm / 60.0) * (cil_litros / 1000.0) * 0.5
+massa_ar_kg_s = volume_aspirado_m3 * densidade_ar * eficiencia_vol
+
+# --- PASSO 2: Fluxo de Combustível (kg/s) ---
+afr_real = abs(mistura) if mistura != 0 else 0.1 
+massa_comb_kg_s = massa_ar_kg_s / afr_real
+
+# --- PASSO 3: Energia Química Bruta (MW) ---
+energia_bruta_mw = massa_comb_kg_s * lcv_combustivel
+
+# --- PASSO 4: Eficiência Térmica (Regras dos Ciclos) ---
+# APLICANDO A LÓGICA EXATA DA SUA PLANILHA
+if tipo_motor == 'Diesel':
+    eficiencia_termica = 0.40 # Fixo em 40% (Alta Compressão)
+    
+elif tipo_motor == 'Pobre':
+    eficiencia_termica = 0.35 # Fixo em 35% (Queima rápida do Hidrogênio)
+    
+else:
+    # Regra do Ciclo Otto (Depende do avanço)
+    rendimento_base_otto = 0.30 
+    eficiencia_termica = rendimento_base_otto + (avanco * 0.001)
+    
+    # Adicionamos uma penalidade se o usuário fugir muito do AFR ideal no painel
+    desvio_afr = abs(afr_real - float(fuel['afr_estoic']))
+    eficiencia_termica = eficiencia_termica - (desvio_afr * 0.015) 
+
+# Trava de segurança para a matemática não gerar valores absurdos
+eficiencia_termica = np.clip(eficiencia_termica, 0.05, 0.60)
+
+# --- PASSO 5: Potência Mecânica Final (cv) ---
+# O fator mágico da sua planilha: 1359.62
+pot_ice_pico = energia_bruta_mw * eficiencia_termica * 1359.62
+
+# Distribuindo esse pico ao longo da curva de RPM (simulando a queda após o pico de torque)
 pico_torque_rpm = int(fuel['rpm_pico_torque'])
-torque_max = float(fuel['pot_max']) * 0.8
+curva_queda = 1 - (((rpm - pico_torque_rpm) / rpm_limite) ** 2)
+pot_ice = pot_ice_pico * np.clip(curva_queda, 0.5, 1.0)
 
-# Curva parabólica centralizada no pico de torque do banco
-torque_curva = torque_max * (1 - ((rpm - pico_torque_rpm)**2 / (rpm_limite**2 / 2))) * eficiencia_total
-pot_ice = (torque_curva * rpm) / 716.2
 pot_total = pot_ice + pot_eletrica
+eficiencia_total = np.mean(eficiencia_termica)
 
 # ==========================================
 # 4. DASHBOARD E ABAS
